@@ -350,25 +350,45 @@ void onEvent (ev_t ev) {
           Serial.println(F(" bytes of payload"));
 
           // Example: parse the downlink as:
-          // Byte[0] = command (e.g., 0x01 = change sleep time)
-          // Byte[1..2] = new sleep time in minutes (uint16, big-endian)
-          //
-          // Adjust this to your own downlink format!
-
-          uint8_t cmd     = LMIC.frame[LMIC.dataBeg + 0];
-          uint8_t byteHi  = LMIC.frame[LMIC.dataBeg + 1];
-          uint8_t byteLo  = LMIC.frame[LMIC.dataBeg + 2];
-
-          // Convert 2 bytes into an integer, e.g., number of minutes
-          uint16_t newSleepMinutes = (byteHi << 8) | byteLo;
-
-          // If the command indicates "change sleep time"
+          // Byte[0] = command (e.g., 0x01 = change sleep time, 0x02 = change shake parameters)
+          // For command 0x01:
+          //    Byte[1..2] = new sleep time in minutes (uint16, big-endian)
+          // For command 0x02:
+          //    Byte[1] = Shake Enable flag (0: disable, 1: enable)
+          //    Byte[2] = New sensitivity threshold for click/shake detection
+          uint8_t cmd = LMIC.frame[LMIC.dataBeg + 0];
           if (cmd == 0x01) {
-              // Convert minutes to seconds, store in RTC variable
-              customSleepDuration   = newSleepMinutes * 60;
-              normalSleepDuration   = customSleepDuration;  // <--- store in RTC
-              Serial.print("Downlink changed normal sleep to ");
+              // Command 0x01: change sleep time.
+              uint8_t byteHi = LMIC.frame[LMIC.dataBeg + 1];
+              uint8_t byteLo = LMIC.frame[LMIC.dataBeg + 2];
+              uint16_t newSleepMinutes = (byteHi << 8) | byteLo;
+              customSleepDuration = newSleepMinutes * 60;
+              normalSleepDuration = customSleepDuration;  // Store in RTC
+              Serial.print("Downlink: Changed normal sleep time to ");
               Serial.println(customSleepDuration);
+          }
+          else if (cmd == 0x02) {
+              // Command 0x02: change click/shake (LIS3DH) parameters.
+              // Byte[1]: Shake Enable flag (0: disable, 1: enable)
+              // Byte[2]: New sensitivity threshold (e.g., 10 for default, lower => more sensitive)
+              uint8_t shakeEnable = LMIC.frame[LMIC.dataBeg + 1];
+              uint8_t newThreshold = LMIC.frame[LMIC.dataBeg + 2];
+
+              if (shakeEnable == 1) {
+                  // Enable shake-to-wake (mode=1) with the given sensitivity threshold,
+                  // using fixed timing parameters (timelimit=10, timelatency=30, timewindow=100)
+                  lis.setClick(1, newThreshold, 10, 30, 100);
+                  Serial.print("Downlink: Shake-to-Wake ENABLED with new sensitivity threshold: ");
+                  Serial.println(newThreshold);
+              } else {
+                  // Disable shake-to-wake by setting the click detection mode to 0.
+                  lis.setClick(0, 0, 0, 0, 0);
+                  Serial.println("Downlink: Shake-to-Wake DISABLED");
+              }
+          }
+          else {
+              Serial.print("Downlink command not recognized: 0x");
+              Serial.println(cmd, HEX);
           }
       }
       // Go to sleep after transmission

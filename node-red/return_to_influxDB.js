@@ -13,6 +13,24 @@ let battery = bytes[0];  // e.g. 0x55 = 85 decimal
 
 // Wake-up reason (second byte)
 let wakeUpReason = bytes[1]; 
+let wakeUpReasonText = (() => {
+    switch(wakeUpReason) {
+        case 0: return "Normal Reset";
+        case 1: return "All Wakeup Sources";
+        case 2: return "Shake Detection";
+        case 3: return "External Signal RTC";
+        case 4: return "Timer";
+        case 5: return "Touchpad";
+        case 6: return "ULP Program";
+        case 7: return "GPIO";
+        case 8: return "UART";
+        case 9: return "WIFI";
+        case 10: return "COCPU Int";
+        case 11: return "COCPU Crash";
+        case 12: return "Bluetooth";
+        default: return "Unknown";
+    }
+})();
 
 // Latitude (signed 32-bit, big-endian at bytes[2..5])
 let latInt = bytes.readInt32BE(2);
@@ -41,12 +59,12 @@ let deviceMeasurement = {
     },
     fields: {
         battery: battery,
-        wakeUpReason: wakeUpReason,  // New field added from byte 1
+        wakeUpReason: wakeUpReason,  // Keep the numeric value
+        wakeUpReasonText: wakeUpReasonText,  // Add the human-readable text
         latitude: latitude,
         longitude: longitude,
         gatewayCount: gatewayCount,
         bestRSSI: bestRSSI,
-        // Add a new field called 'gates'
         gates: gatewayCount
     },
     timestamp: new Date() // or use incoming.ts for server-provided timestamp
