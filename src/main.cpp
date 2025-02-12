@@ -58,7 +58,7 @@
 // Sleep configuration
 #define uS_TO_S_FACTOR 1000000ULL // Conversion factor for micro seconds to seconds
 #define DEFAULT_SLEEP_TIME 1200
-#define TIMEOUT_DURATION 30000   // Timeout duration in milliseconds (30 s)
+#define TIMEOUT_DURATION 10000   // Timeout duration in milliseconds (10 s)
 
 RTC_DATA_ATTR int customSleepDuration = DEFAULT_SLEEP_TIME; // seconds
 RTC_DATA_ATTR bool wasNightSleep = false; 
