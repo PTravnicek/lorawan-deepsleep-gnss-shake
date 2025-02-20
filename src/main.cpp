@@ -43,6 +43,19 @@
 #include "driver/rtc_io.h"
 #include <Adafruit_LIS3DH.h>
 #include <Adafruit_Sensor.h>
+#include "OLEDDisplayController.h"
+
+// Display dimensions and configuration
+#define SCREEN_WIDTH 128    // OLED display width, in pixels
+#define SCREEN_HEIGHT 64    // OLED display height, in pixels
+#define I2C_ADDR 0x3c       // I2C address of the OLED display
+#define OLED_RESET -1       // Reset pin (or -1 if sharing Arduino reset pin)
+#define OLED_SDA 21         // Custom SDA pin for OLED
+#define OLED_SCL 22         // Custom SCL pin for OLED
+
+// Instantiate the OLED display controller
+OLEDDisplayController oledController(OLED_SDA, OLED_SCL, I2C_ADDR, SCREEN_WIDTH, SCREEN_HEIGHT, OLED_RESET);
+
 
 // Define pins
 #ifdef __AVR__
@@ -52,20 +65,20 @@
 #endif
 
 #define LORA_POWER_PIN      D13   // Pin number to control the LDO
-#define GPS_POWER_PIN       D10   // Pin number to control the LDO
+#define GPS_POWER_PIN       D11   // Pin number to control the LDO
 
 
 // Sleep configuration
 #define uS_TO_S_FACTOR 1000000ULL // Conversion factor for micro seconds to seconds
 #define DEFAULT_SLEEP_TIME 1200
-#define TIMEOUT_DURATION 10000   // Timeout duration in milliseconds (10 s)
+#define TIMEOUT_DURATION 120000   // Timeout duration in milliseconds (2 min)
 
 RTC_DATA_ATTR int customSleepDuration = DEFAULT_SLEEP_TIME; // seconds
 RTC_DATA_ATTR bool wasNightSleep = false; 
 RTC_DATA_ATTR int  normalSleepDuration = DEFAULT_SLEEP_TIME;
 
 // Battery and GNSS thresholds
-#define BAT_PERCENTAGE        15
+#define BAT_PERCENTAGE        15  //bat pin
 
 // GNSS Mode selection: Choose either INDOOR or OUTDOOR
 enum Mode { INDOOR, OUTDOOR };
@@ -181,7 +194,7 @@ bool gnssConnected = false;
 
 RTC_DATA_ATTR int bootCount = 0;   // Variable to store boot count in RTC memory
 int joinRetries = 0;
-const int maxJoinRetries = 5; // Set the desired maximum number of retries
+const int maxJoinRetries = 4; // Set the desired maximum number of retries
 
 // Add RTC_DATA_ATTR variables to store last known GNSS data
 RTC_DATA_ATTR double lastLatitude = 0.0;
@@ -247,8 +260,6 @@ void enterSleepMode() {
   rtc_gpio_set_level((gpio_num_t)LORA_POWER_PIN, 1);
   rtc_gpio_hold_en((gpio_num_t)LORA_POWER_PIN);
 
-  digitalWrite(GPS_POWER_PIN, LOW);    // turn the GNSS module OFF
-
   // Configure sleep timer
   esp_sleep_enable_timer_wakeup(customSleepDuration * uS_TO_S_FACTOR);
 
@@ -257,6 +268,11 @@ void enterSleepMode() {
   Serial.println("Going to sleep now");
   Serial.flush();  
   
+  // delay(1000);
+  // oledController.powerOn();
+  oledController.displayMessage("Sleep (s)", customSleepDuration , 50);
+  delay(1000);
+  oledController.powerOff();
   // Enter deep sleep
   esp_deep_sleep_start();
 }
@@ -287,6 +303,7 @@ void onEvent (ev_t ev) {
       break;
     case EV_JOINING:
       Serial.println(F("EV_JOINING"));
+      // oledController.displayMessage("LoRa", "Joining", 50);
       break;
     case EV_JOINED:
       Serial.println(F("EV_JOINED"));
@@ -340,11 +357,13 @@ void onEvent (ev_t ev) {
       break;
     case EV_TXCOMPLETE:
     Serial.println(F("EV_TXCOMPLETE (includes waiting for RX windows)"));
+    // oledController.displayMessage("LoRa", "sent", 50);
       if (LMIC.txrxFlags & TXRX_ACK)
           Serial.println(F("Received ack"));
 
       // If there's downlink data, parse it here
       if (LMIC.dataLen) {
+          // oledController.displayMessage("LoRa", "recived", 50);
           Serial.print(F("Received "));
           Serial.print(LMIC.dataLen);
           Serial.println(F(" bytes of payload"));
@@ -426,9 +445,12 @@ void onEvent (ev_t ev) {
         Serial.print(joinRetries);
         Serial.print(" of ");
         Serial.println(maxJoinRetries);
+        // oledController.displayMessage("LoRa", "#try", 50);
+        // oledController.displayMessage("LoRa", joinRetries, 50);
         LMIC_startJoining();
       } else {
         Serial.println(F("Maximum join retries reached, going to sleep."));
+        // oledController.displayMessage("LoRa", "noNetw", 50);
         enterSleepMode();
       }
       break;
@@ -450,6 +472,7 @@ void do_send(osjob_t* j){
     Serial.print("Battery percentage: ");
     Serial.print(batteryPercentage);
     Serial.println("%");
+    // oledController.displayMessage("Battery", batteryPercentage, 50);
 
     if(intFlag == 1) {
       intFlag = 0;
@@ -542,9 +565,11 @@ void do_send(osjob_t* j){
 =============================*/
 void shakeToWakeSetup() {
     if (!lis.begin(0x18)) {   // Change this to 0x19 for an alternative I2C address
+      // oledController.displayMessage("Shake", "err", 50);
        Serial.println("Could not start LIS3DH");
        while(1) yield();
     }
+    // oledController.displayMessage("Shake", "ok", 50);
     Serial.println("LIS3DH found!");
     
     lis.setRange(LIS3DH_RANGE_16_G);   // Set to full-scale 16G for lower sensitivity
@@ -561,16 +586,43 @@ void shakeToWakeSetup() {
     Serial.println("Configured INT1 (active low, latched) for tap/doubletap interrupt.");
 }
 
-void setup() {
+void setup() {  
   Serial.begin(115200);
+  // Disable hold so we can reconfigure the pin
+  rtc_gpio_hold_dis((gpio_num_t)LORA_POWER_PIN);
+
+  pinMode(GPS_POWER_PIN, OUTPUT);    // Set GPS_POWER_PIN as output
+  digitalWrite(GPS_POWER_PIN, HIGH); // Turn the GNSS module on
+
+  pinMode(LORA_POWER_PIN, OUTPUT);    // Set GPS_POWER_PIN as output
+  digitalWrite(LORA_POWER_PIN, LOW); // Turn the LORA module on (inverse logic to GNSS)
+
+  // Initialize SPI
+  SPI.begin();
+  oledController.begin();
   delay(1000);
   ++bootCount;
   Serial.println("Boot number: " + String(bootCount));
 
-  // Initialize SPI
-  SPI.begin();
   // Print the reason for wakeup
   print_wakeup_reason();
+  
+  oledController.powerOn();
+  oledController.displayMessage("Setup", "...", 50);
+
+  // Initialize battery gauge
+  pinMode(ALR_PIN, INPUT_PULLUP);
+  // attachInterrupt(digitalPinToInterrupt(ALR_PIN), interruptCallBack, FALLING);
+  while(gauge.begin() != 0) {
+    Serial.println("Gauge initialization failed!");
+    delay(2000);
+  }
+  Serial.println("Gauge initialized successfully!");
+  // gauge.setInterrupt(BAT_PERCENTAGE);
+  int batteryPercentage = gauge.readPercentage();
+  Serial.print("Battery percentage setup: ");
+  Serial.print(batteryPercentage);
+  Serial.println("%");
 
   if (wasNightSleep) {
     wasNightSleep = false;
@@ -578,39 +630,18 @@ void setup() {
     Serial.print("Woke from night sleep, restoring normal interval: ");
     Serial.println(customSleepDuration);
   }
-  // // Blink the LED
-  // blinkLED();
 
-  // Disable hold so we can reconfigure the pin
-  rtc_gpio_hold_dis((gpio_num_t)LORA_POWER_PIN);
-
-  // Initialize battery gauge
-  pinMode(ALR_PIN, INPUT_PULLUP);
-  
-  pinMode(GPS_POWER_PIN, OUTPUT);    // Set GPS_POWER_PIN as output
-  pinMode(LORA_POWER_PIN, OUTPUT);    // Set GPS_POWER_PIN as output
-
+  // oledController.displayMessage("GPS", "begin", 50);
   while(!gnss.begin()){
     Serial.println("No GNSS Device!");
     digitalWrite(GPS_POWER_PIN, HIGH); // Turn the GNSS module on
     delay(1000);
   }
+  // oledController.displayMessage("GPS", "ok", 50);
 
   gnss.enablePower();
   gnss.setGnss(eGPS_GLONASS);
-  gnss.setRgbOn();
-
-  attachInterrupt(digitalPinToInterrupt(ALR_PIN), interruptCallBack, FALLING);
-  while(gauge.begin() != 0) {
-    Serial.println("Gauge initialization failed!");
-    delay(2000);
-  }
-  Serial.println("Gauge initialized successfully!");
-  gauge.setInterrupt(BAT_PERCENTAGE);
-
-  // Initialize GNSS module
-  digitalWrite(GPS_POWER_PIN, HIGH); // Turn the GNSS module on
-  digitalWrite(LORA_POWER_PIN, LOW); // Turn the LORA module on (inverse logic to GNSS)
+  gnss.setRgbOff();
 
   #if SHAKE_TO_WAKE_ENABLED
     shakeToWakeSetup();
@@ -619,109 +650,136 @@ void setup() {
   os_init();
   // Reset the MAC state. Session and pending data transfers will be discarded.
   LMIC_reset();
+
+  oledController.displayMessage("Setup", "finished", 50);
+  // oledController.powerOff();
 }
 
 
 void loop() {
+  oledController.displayMessage("GPS", "connecting", 50);
   switch (currentMode) {
     case OUTDOOR: {
+  
+      // oledController.powerOn();
+      // oledController.displayMessage("GPS", "outdoor", 50);
+      // oledController.displayMessage("GPS", "connecting", 50);
+      // oledController.powerOff();
       unsigned long startTime = millis();
 
       // Attempt to connect with timeout
       while (millis() - startTime < TIMEOUT_DURATION) {
         uint8_t numSatellites = gnss.getNumSatUsed();
-        if (numSatellites > 0) {  // Check if GNSS has a satellite fix
-          Serial.println("GNSS Connected.");
+          if (numSatellites > 0) {  // Check if GNSS has a satellite fix
+            Serial.println("GNSS Connected.");
+
+            sTim_t utc = gnss.getUTC();
+            sTim_t date = gnss.getDate();
+            sLonLat_t lat = gnss.getLat();
+            sLonLat_t lon = gnss.getLon();
+            double high = gnss.getAlt();
+            double sog = gnss.getSog();
+            double cog = gnss.getCog();
+            
+            // oledController.powerOn();
+            // oledController.displayMessage("GPS", "outdoor", 50);
+            // oledController.displayMessage("GPS", "connected", 50);
+            // delay(500);
+            // oledController.displayMessage("GPS", "after", 50);
+            // oledController.displayMessage("GPS", (millis() - startTime), 50);
+            // oledController.powerOff();
+            // Read GNSS data
 
 
-          // Read GNSS data
-          sTim_t utc = gnss.getUTC();
-          sTim_t date = gnss.getDate();
-          sLonLat_t lat = gnss.getLat();
-          sLonLat_t lon = gnss.getLon();
-          double high = gnss.getAlt();
-          double sog = gnss.getSog();
-          double cog = gnss.getCog();
+            int TIMEZONE_OFFSET = +1; // or whatever your local offset is from UTC
 
-          int TIMEZONE_OFFSET = +1; // or whatever your local offset is from UTC
+            // Suppose we want to sleep between 10 PM and 6 AM local time
+            int localHour = (utc.hour + TIMEZONE_OFFSET) % 24;
+            int localMinute = utc.minute;
+            if (localHour >= napTimeHour || localHour < wakeUpHour) {
+                Serial.print("It's night time, ");
+                Serial.print(localHour);
+                Serial.print(":");
+                Serial.print(localMinute);
+                Serial.println(" (hh:mm), I don't want to work");
+                wasNightSleep = true;         // <--- set the flag
+                // Convert current time to total minutes since midnight
+                int currentTotalMinutes = localHour * 60 + localMinute;
 
-          // Suppose we want to sleep between 10 PM and 6 AM local time
-          int localHour = (utc.hour + TIMEZONE_OFFSET) % 24;
-          int localMinute = utc.minute;
-          if (localHour >= napTimeHour || localHour < wakeUpHour) {
-              Serial.print("It's night time, ");
-              Serial.print(localHour);
-              Serial.print(":");
-              Serial.print(localMinute);
-              Serial.println(" (hh:mm), I don't want to work");
-              wasNightSleep = true;         // <--- set the flag
-              // Convert current time to total minutes since midnight
-              int currentTotalMinutes = localHour * 60 + localMinute;
+                // Convert wakeUpHour to total minutes (assuming wake at HH:00)
+                int targetTotalMinutes = wakeUpHour * 60; 
 
-              // Convert wakeUpHour to total minutes (assuming wake at HH:00)
-              int targetTotalMinutes = wakeUpHour * 60; 
+                // Compute how many minutes until the *next* wakeUpHour,
+                // wrapping around 24 hours (1440 minutes) if needed.
+                int minutesUntilWake = 
+                  ( (targetTotalMinutes - currentTotalMinutes) + (24 * 60) ) % (24 * 60);
 
-              // Compute how many minutes until the *next* wakeUpHour,
-              // wrapping around 24 hours (1440 minutes) if needed.
-              int minutesUntilWake = 
-                ( (targetTotalMinutes - currentTotalMinutes) + (24 * 60) ) % (24 * 60);
+                // Convert that back to hours and leftover minutes
+                int hoursUntilWake   = minutesUntilWake / 60;
+                int leftoverMinutes  = minutesUntilWake % 60;
 
-              // Convert that back to hours and leftover minutes
-              int hoursUntilWake   = minutesUntilWake / 60;
-              int leftoverMinutes  = minutesUntilWake % 60;
+                Serial.print("Want to sleep for another ");
+                Serial.print(hoursUntilWake);
+                Serial.print(" hours and ");
+                Serial.print(leftoverMinutes);
+                Serial.println(" minutes.");
 
-              Serial.print("Want to sleep for another ");
-              Serial.print(hoursUntilWake);
-              Serial.print(" hours and ");
-              Serial.print(leftoverMinutes);
-              Serial.println(" minutes.");
+                // Convert to whatever time unit your sleep function needs
+                // For example, if you need total seconds:
+                customSleepDuration = minutesUntilWake * 60;
 
-              // Convert to whatever time unit your sleep function needs
-              // For example, if you need total seconds:
-              customSleepDuration = minutesUntilWake * 60;
+                // oledController.displayMessage("Night", "time", 50);
+                // oledController.displayMessage("Good", "night", 50);
+                // delay(500);
+                // Enter sleep mode
+                enterSleepMode();
+                // return;  // Don't continue if you decided to sleep
+            }
 
-              // Enter sleep mode
-              enterSleepMode();
-              // return;  // Don't continue if you decided to sleep
-          }
+            // Print GNSS data
+            Serial.println("");
+            Serial.print(date.year); Serial.print("/");
+            Serial.print(date.month); Serial.print("/");
+            Serial.print(date.date); Serial.print(" ");
+            Serial.print(utc.hour); Serial.print(":");
+            Serial.print(utc.minute); Serial.print(":");
+            Serial.print(utc.second); Serial.println();
+            Serial.print("Latitude: "); Serial.println(lat.latitudeDegree, 6);
+            Serial.print("Longitude: "); Serial.println(lon.lonitudeDegree, 6);
+            Serial.print("Altitude: "); Serial.println(high);
+            Serial.print("SOG: "); Serial.println(sog);
+            Serial.print("COG: "); Serial.println(cog);
+            Serial.print("GNSS mode: "); Serial.println(gnss.getGnssMode());
 
-          // Print GNSS data
-          Serial.println("");
-          Serial.print(date.year); Serial.print("/");
-          Serial.print(date.month); Serial.print("/");
-          Serial.print(date.date); Serial.print(" ");
-          Serial.print(utc.hour); Serial.print(":");
-          Serial.print(utc.minute); Serial.print(":");
-          Serial.print(utc.second); Serial.println();
-          Serial.print("Latitude: "); Serial.println(lat.latitudeDegree, 6);
-          Serial.print("Longitude: "); Serial.println(lon.lonitudeDegree, 6);
-          Serial.print("Altitude: "); Serial.println(high);
-          Serial.print("SOG: "); Serial.println(sog);
-          Serial.print("COG: "); Serial.println(cog);
-          Serial.print("GNSS mode: "); Serial.println(gnss.getGnssMode());
 
-          delay(1000);  // Delay to print GNSS data regularly
-          gnssConnected = true;  // Set the flag to indicate connection is established
+            gnssConnected = true;  // Set the flag to indicate connection is established
+            // oledController.displayMessage("GPS", "connected", 50);
+            delay(1000);  // Delay to print GNSS data regularly
+            // Schedule data to be sent
+            do_send(&sendjob);
 
-          // Schedule data to be sent
-          do_send(&sendjob);
+            // Loop over os_runloop_once() to allow LMIC to handle transmission
+            while (true) {
+              os_runloop_once();
+              // The loop will exit when enterSleepMode() is called in EV_TXCOMPLETE
+            }
 
-          // Loop over os_runloop_once() to allow LMIC to handle transmission
-          while (true) {
-            os_runloop_once();
-            // The loop will exit when enterSleepMode() is called in EV_TXCOMPLETE
-          }
-
-          // No break statement needed as we won't reach here
+            // No break statement needed as we won't reach here
         }
-        delay(1000);  // Wait 1 second before trying again
         Serial.print("GPS search duration: ");
         Serial.println(millis() - startTime);
+
+        // oledController.powerOn();
+        // oledController.displayMessage("GPS (s)", (millis() - startTime), 50);
+        delay(1000);  // Wait 1 second before trying again
+        // oledController.powerOff();
       }
 
       if (!gnssConnected) {
         if ((lastLatitude != 0.0) || (lastLongitude != 0.0)) {
            Serial.println("No new GNSS fix, using last known location.");
+           digitalWrite(GPS_POWER_PIN, LOW);    // turn the GNSS module OFF
+          //  oledController.displayMessage("GPS", "oldConn", 50);
            // Use saved GNSS data to send a packet.
            do_send(&sendjob);
            while (true) {
@@ -730,6 +788,7 @@ void loop() {
         }
         else {
            Serial.println("Connection timed out, no last known fix available, going to sleep.");
+          //  oledController.displayMessage("GPS", "noConn", 50);
            enterSleepMode();
         }
       }
@@ -737,7 +796,11 @@ void loop() {
     }
 
     case INDOOR: {
+      digitalWrite(GPS_POWER_PIN, LOW);    // turn the GNSS module OFF
+      // oledController.displayMessage("GPS", "indoor", 50);
+      // oledController.displayMessage("GPS", "off", 50);
       // Simulate GNSS connection and coordinates for indoor mode
+
       Serial.println("Using mock coordinates as fallback:");
       Serial.print("Mock Latitude: "); Serial.println(mockLatitude, 6);
       Serial.print("Mock Longitude: "); Serial.println(mockLongitude, 6);
@@ -747,6 +810,7 @@ void loop() {
       int localHourMockValue = 20;
       int localMinuteMockValue = 30;
       if (localHourMockValue >= napTimeHour || localHourMockValue < wakeUpHour) {
+          // oledController.displayMessage("Night", "time", 50);
           Serial.print("It's night time, ");
           Serial.print(localHourMockValue);
           Serial.print(":");
