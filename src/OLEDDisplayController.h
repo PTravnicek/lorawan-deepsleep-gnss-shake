@@ -17,8 +17,8 @@ public:
     void begin();
 
     // Removed displayTime parameter
-    void displayMessage(const char* functionName, const char* status, uint8_t brightness = 128);
-    void displayMessage(const char* functionName, int status, uint8_t brightness = 128);
+    void displayMessage(const char* functionName, const char* status, uint8_t brightness = 10);
+    void displayMessage(const char* functionName, int status, uint8_t brightness = 10);
 
     // Turn on the display (send command 0xAF)
     void powerOn();

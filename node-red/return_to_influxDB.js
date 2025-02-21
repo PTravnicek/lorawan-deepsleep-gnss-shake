@@ -1,18 +1,22 @@
 let incoming = msg.payload;
 
-// 1) Decode the hex "data" field into a 10-byte Buffer.
+// 1) Decode the hex "data" field into an 11-byte Buffer.
 //    - Byte 0: Battery percentage
-//    - Byte 1: Wake-up reason (esp_sleep_get_wakeup_cause())
-//    - Bytes 2..5: Latitude (signed 32-bit, microdegrees)
-//    - Bytes 6..9: Longitude (signed 32-bit, microdegrees)
+//    - Byte 1: GPS fix time in seconds
+//    - Byte 2: Wake-up reason (esp_sleep_get_wakeup_cause())
+//    - Bytes 3..6: Latitude (signed 32-bit, microdegrees)
+//    - Bytes 7..10: Longitude (signed 32-bit, microdegrees)
 let dataHex = incoming.data;               // e.g. "550102fc88b400db8fd1" (example hex)
 let bytes = Buffer.from(dataHex, "hex");   // Convert hex to Buffer
 
 // Battery (first byte)
 let battery = bytes[0];  // e.g. 0x55 = 85 decimal
 
+// GPS fix time in seconds (second byte)
+let gpsFixTime = bytes[1];
+
 // Wake-up reason (second byte)
-let wakeUpReason = bytes[1]; 
+let wakeUpReason = bytes[2]; 
 let wakeUpReasonText = (() => {
     switch(wakeUpReason) {
         case 0: return "Normal Reset";
@@ -32,10 +36,10 @@ let wakeUpReasonText = (() => {
     }
 })();
 
-// Latitude (signed 32-bit, big-endian at bytes[2..5])
-let latInt = bytes.readInt32BE(2);
-// Longitude (signed 32-bit, big-endian at bytes[6..9])
-let lonInt = bytes.readInt32BE(6);
+// Latitude (signed 32-bit, big-endian at bytes[3..6])
+let latInt = bytes.readInt32BE(3);
+// Longitude (signed 32-bit, big-endian at bytes[7..10])
+let lonInt = bytes.readInt32BE(7);
 
 // Convert to float degrees
 let latitude = latInt / 1_000_000;
@@ -59,6 +63,7 @@ let deviceMeasurement = {
     },
     fields: {
         battery: battery,
+        gpsFixTime: gpsFixTime,  // Add GPS fix time in seconds
         wakeUpReason: wakeUpReason,  // Keep the numeric value
         wakeUpReasonText: wakeUpReasonText,  // Add the human-readable text
         latitude: latitude,
