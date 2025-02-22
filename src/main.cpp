@@ -57,7 +57,7 @@
 OLEDDisplayController oledController(OLED_SDA, OLED_SCL, I2C_ADDR, SCREEN_WIDTH, SCREEN_HEIGHT, OLED_RESET);
 
 // Debugging option
-#define DEBUG 0
+#define DEBUG 1
 
 #if DEBUG == 1
   #define debug(x)   Serial.print(x)
@@ -519,17 +519,13 @@ void do_send(osjob_t* j){
     mydata[2] = (uint8_t) esp_sleep_get_wakeup_cause();
 
     if (gnssConnected) {
-      // Retrieve fresh GNSS data using the new getGNSS() function.
-      oledController.displayMessage("GPS", "fix OK" );
-      GnssData data = getGNSS();
-
-      // Update saved last fix.
-      lastLatitude = data.latitude;
-      lastLongitude = data.longitude;
-      lastAltitude = data.altitude;
-
-      int32_t lat_int = data.latitude * 1000000; // Convert to integer
-      int32_t lon_int = data.longitude * 1000000; // Convert to integer
+      int32_t lat_int = lastLatitude * 1000000; // Convert to integer
+      int32_t lon_int = lastLongitude * 1000000; // Convert to integer
+      
+      Serial.print("lon_int= ");
+      Serial.println(lat_int);
+      Serial.print("lon_int= ");
+      Serial.println(lon_int);
 
       // Store latitude in bytes 3-6
       mydata[3] = (lat_int >> 24) & 0xFF;
@@ -542,14 +538,14 @@ void do_send(osjob_t* j){
       mydata[8] = (lon_int >> 16) & 0xFF;
       mydata[9] = (lon_int >> 8) & 0xFF;
       mydata[10] = lon_int & 0xFF;
+
+      // oledController.displayMessage("GPS", "fix OK" );
     }
     else {
       // No new fix: check if a valid previous fix exists.
       oledController.displayMessage("GPS", "no fix" );
       delay(1000);
       if ((lastLatitude != 0.0) || (lastLongitude != 0.0)) {
-        oledController.displayMessage("GPS", "last pos" );
-        delay(1000);
         int32_t lat_int = lastLatitude * 1000000;
         int32_t lon_int = lastLongitude * 1000000;
 
@@ -564,10 +560,12 @@ void do_send(osjob_t* j){
         mydata[8] = (lon_int >> 16) & 0xFF;
         mydata[9] = (lon_int >> 8) & 0xFF;
         mydata[10] = lon_int & 0xFF;
+
+        oledController.displayMessage("GPS", "last pos" );
+        delay(1000);
       }
       else {
         // Fallback to mock data (should rarely occur).
-        oledController.displayMessage("GPS", "mock pos" );
         int32_t lat_int = mockLatitude * 1000000;
         int32_t lon_int = mockLongitude * 1000000;
 
@@ -582,11 +580,13 @@ void do_send(osjob_t* j){
         mydata[8] = (lon_int >> 16) & 0xFF;
         mydata[9] = (lon_int >> 8) & 0xFF;
         mydata[10] = lon_int & 0xFF;
+
+        oledController.displayMessage("GPS", "mock pos" );
       }
     }
 
     // Send data
-    oledController.displayMessage("LoRa", "sending..." );
+    oledController.displayMessage("LoRa", "sending" );
     LMIC_setTxData2(1, mydata, sizeof(mydata), 0);
     debugln(F("Packet queued"));
   }
@@ -644,13 +644,14 @@ bool checkNightTime(int hour, int minute) {
 bool handleGNSS() {
     unsigned long startTime = millis();
     debugln("GNSS Searching.");
-    oledController.displayMessage("GPS", "search" );
+    // oledController.displayMessage("GPS", "search" );
 
     // Attempt to connect with timeout
     while (millis() - startTime < TIMEOUT_DURATION) {
         uint8_t numSatellites = gnss.getNumSatUsed();
         if (numSatellites > 0) {
             debugln("GNSS Connected.");
+            gnssConnected = true;  // 
             fixTime = millis() - startTime;  // Update global fixTime
             debug("GNSS fix obtained in ");
             debug(fixTime);
@@ -684,13 +685,6 @@ bool handleGNSS() {
 
 
 void setup() {  
-  // Disable WiFi and Bluetooth
-  // WiFi.mode(WIFI_OFF);
-  // btStop();
-  
-  // // Disable unused ADC to save power
-  // adc_power_off();
-
   Serial.begin(115200);
   // Disable hold so we can reconfigure the pin
   rtc_gpio_hold_dis((gpio_num_t)LORA_POWER_PIN);
@@ -765,8 +759,7 @@ void loop() {
     case OUTDOOR: {
       if (handleGNSS()) {
           do_send(&sendjob);
-          while (!(LMIC.opmode & OP_TXRXPEND)) {
-              esp_light_sleep_start();
+          while (true) {
               os_runloop_once();
           }
       } else if ((lastLatitude != 0.0) || (lastLongitude != 0.0)) {
@@ -832,7 +825,6 @@ void loop() {
           enterSleepMode();
           // return;  // Don't continue if you decided to sleep
       }
-
       gnssConnected = false;  // false is needed to send mockup data in do_send
       delay(1000);  // Simulate activity delay
 
